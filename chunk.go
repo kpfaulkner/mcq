@@ -1,9 +1,12 @@
 package mcq
 
 import (
+	"fmt"
+	"io"
+	"math/bits"
+
 	"github.com/alaingilbert/mcq/mc"
 	"github.com/alaingilbert/mcq/nbt"
-	"math/bits"
 )
 
 const NbSection = 16
@@ -65,6 +68,11 @@ func (c *Chunk) Each(clb func(block mc.Block)) {
 		z += c.GetWorldZ()
 		return
 	}
+
+	for k, _ := range c.GetData().Root().Entries {
+		fmt.Printf("data key %s\n", k)
+	}
+
 	sections := c.GetData().Root().Entries["sections"].(*nbt.TagNodeList)
 	for s := 0; s < NbSection; s++ {
 		section := sections.Get(s).(*nbt.TagNodeCompound)
@@ -102,4 +110,11 @@ func (c *Chunk) Each(clb func(block mc.Block)) {
 			clb(block)
 		}
 	}
+}
+
+// WriteChunkToWriteSeeker writes the chunk data to a writer.
+// Needs to write sections/blocks in correct format... still yet to figure out.
+func (c *Chunk) WriteChunkToWriteSeeker(stream io.WriteSeeker) error {
+
+	return nil
 }

@@ -5,15 +5,21 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
-	"github.com/alaingilbert/mcq/mc"
-	"github.com/alaingilbert/mcq/nbt"
 	"io"
 	"io/ioutil"
 	"log"
 	"math"
 	"os"
 	"path"
+
+	"github.com/alaingilbert/mcq/mc"
+	"github.com/alaingilbert/mcq/nbt"
 )
+
+type ChunkLoc struct {
+	ChunkX int
+	ChunkZ int
+}
 
 // Region represent a minecraft region.
 type Region struct {
@@ -61,6 +67,34 @@ func regionCoordinatesFromXYZ(x, y, z int) (int, int) {
 	var regionX = int(math.Floor(float64(x) / (math.Pow(2, float64(z)))))
 	var regionZ = int(math.Floor(float64(y) / (math.Pow(2, float64(z)))))
 	return regionX, regionZ
+}
+
+// GenerateChunkMap generate map (or convert to tree?) of chunks.
+func (r *Region) GenerateChunkMap() (map[ChunkLoc]*Chunk, error) {
+	p := r.getRegionFilePath()
+
+	m := make(map[ChunkLoc]*Chunk)
+
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	by, _ := ioutil.ReadAll(f)
+	b := bytes.NewReader(by)
+
+	for cx := 0; cx < 32; cx++ {
+		for cz := 0; cz < 32; cz++ {
+			chunk := getChunkFromReadSeeker(b, r.dim, r.x, r.z, cx, cz)
+			if chunk == nil {
+				continue
+			}
+			m[ChunkLoc{cx, cz}] = chunk
+		}
+	}
+
+	return m, nil
 }
 
 func (r *Region) Each(clb func(chunk *Chunk)) {
@@ -261,6 +295,33 @@ func (r *Region) GetChunk(localX, localZ int) *Chunk {
 // chunkHeaderOffset get the offset of the chunk information in the file header.
 // It returns the offset in bytes.
 // & 0b1_1111 ensure the value is always in the range [0-31]
+// See https://minecraft.fandom.com/wiki/Region_file_format
 func chunkHeaderOffset(chunkX, chunkZ int) int {
 	return ((chunkX & 0b1_1111) + (chunkZ&0b1_1111)<<5) << 2
+}
+
+////////////// new saving code... ?
+
+// SaveRegion writes region/chunks/everything to disk
+func (r *Region) SaveRegion(path string) error {
+
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	by, _ := ioutil.ReadAll(f)
+	b := bytes.NewReader(by)
+
+	for cx := 0; cx < 32; cx++ {
+		for cz := 0; cz < 32; cz++ {
+			chunk := getChunkFromReadSeeker(b, r.dim, r.x, r.z, cx, cz)
+			if chunk == nil {
+				continue
+			}
+		}
+	}
+
+	return nil
 }

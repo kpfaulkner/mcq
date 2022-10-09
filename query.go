@@ -2,9 +2,10 @@ package mcq
 
 import (
 	"fmt"
+	"math/bits"
+
 	"github.com/alaingilbert/mcq/mc"
 	"github.com/alaingilbert/mcq/nbt"
-	"math/bits"
 )
 
 type query struct {
@@ -231,7 +232,150 @@ func (q *query) Block(coord mc.ICoordinate, clb func(mc.ID)) {
 	clb(blockID)
 }
 
-func (q *query) Find(clb func(Result), opts ...EntitiesOption) {
+func (q *query) FindBlocks(clb func(Result), opts ...EntitiesOption) {
+	var searchScope byte
+
+	searchScope = q.searchScope
+
+	conf := new(EntitiesConf)
+	for _, opt := range opts {
+		opt(conf)
+	}
+	q.entities = conf
+
+	searchScope = setBlockScope(searchScope)
+
+	type regionNbbox struct {
+		region *Region
+		bbox   IBBox
+	}
+
+	regionsNbbox := make([]regionNbbox, 0)
+
+	if len(q.bboxes) == 0 {
+		if q.dim == 0 {
+			q.world.RegionManager().Each(mc.Overworld, func(region *Region) {
+				regionsNbbox = append(regionsNbbox, regionNbbox{region, nil})
+			})
+			/*
+				q.world.RegionManager().Each(mc.Nether, func(region *Region) {
+					regionsNbbox = append(regionsNbbox, regionNbbox{region, nil})
+				})
+				q.world.RegionManager().Each(mc.TheEnd, func(region *Region) {
+					regionsNbbox = append(regionsNbbox, regionNbbox{region, nil})
+				}) */
+		} else {
+			q.world.RegionManager().Each(q.dim, func(region *Region) {
+				regionsNbbox = append(regionsNbbox, regionNbbox{region, nil})
+			})
+		}
+	} else {
+		for _, bb := range q.bboxes {
+			startX, startZ := RegionCoordinatesFromWorldXZ(bb.Coord1().X(), bb.Coord1().Z())
+			startX <<= 9
+			startZ <<= 9
+			for tmpX := startX; tmpX <= bb.Coord2().X(); tmpX += RegionWidth {
+				for tmpZ := startZ; tmpZ <= bb.Coord2().Z(); tmpZ += RegionWidth {
+					rx, rz := RegionCoordinatesFromWorldXZ(tmpX, tmpZ)
+					region := q.world.RegionManager().GetRegion(bb.Coord1().Dim(), rx, rz)
+					regionsNbbox = append(regionsNbbox, regionNbbox{region, bb})
+				}
+			}
+		}
+	}
+
+	/*
+		processResult := func(coord mc.ICoordinate, item mc.IIdentifiable, desc string) {
+			if q.hasTarget(item.ID()) {
+
+					if q.entities.CustomName != nil {
+						if *q.entities.CustomName {
+							// Keep only named things
+							if i, ok := item.(mc.INamed); ok {
+								if i.CustomName() == "" {
+									return
+								}
+							} else {
+								return
+							}
+						} else {
+							// Skip all named things
+							if i, ok := item.(mc.INamed); ok && i.CustomName() != "" {
+								return
+							}
+						}
+					}
+
+				description := ""
+				if e, ok := item.(mc.IEntity); ok {
+					description += "entity " + e.ID().String()
+				} else {
+					description += "found " + item.ID().String()
+				}
+				description += desc
+				clb(NewResult(coord, description, item))
+			}
+		} */
+
+	// get each block in each region?
+	if hasBlockScope(searchScope) {
+		for _, t := range regionsNbbox {
+			chunks, err := t.region.GenerateChunkMap()
+			if err != nil {
+
+			}
+			for i, chunk := range chunks {
+				chunk.Each(func(block mc.Block) {
+					if t.bbox != nil && !t.bbox.Contains(block) {
+						return
+					}
+					//processResult(block, block, "")
+					fmt.Printf("chunk %d has block : dim %s :  %v\n", i, block.Dim(), block)
+
+				})
+			}
+		}
+	}
+
+	for _, t := range regionsNbbox {
+		if hasItemsScope(searchScope) {
+			t.region.Each(func(chunk *Chunk) {
+				if blockEntities, ok := chunk.GetData().Root().Entries["block_entities"].(*nbt.TagNodeList); ok {
+					blockEntities.Each(func(node nbt.ITagNode) {
+						blockEntityNbt := node.(*nbt.TagNodeCompound)
+						blockEntity := mc.ParseBlockEntity(blockEntityNbt)
+						x, y, z := blockEntity.X(), blockEntity.Y(), blockEntity.Z()
+						blockCoord := mc.NewCoord(t.region.GetDimension(), x, y, z)
+						if t.bbox != nil && !t.bbox.Contains(blockCoord) {
+							return
+						}
+
+						processResult1 := func(item mc.IIdentifiable, desc string) {
+							//processResult(blockCoord, item, desc)
+						}
+
+						// Process the block entity itself
+						processResult1(blockEntity, "")
+
+						// Process containers such as chest/barrel/shulker
+						if itemsHolder, ok := blockEntity.(mc.IContainerEntity); ok {
+							itemsHolder.Items().Each(func(item mc.IItem) {
+								processResult1(item, " in "+blockEntity.ID().String())
+								if shulkerBoxItem, ok := item.(*mc.ShulkerBoxItem); ok {
+									shulkerBoxItem.Items().Each(func(item mc.IItem) {
+										processResult1(item, " in "+shulkerBoxItem.ID().String()+" in "+blockEntity.ID().String())
+									})
+								}
+							})
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
+func (q *query) FindOrig(clb func(Result), opts ...EntitiesOption) {
 	var searchScope byte
 	if q.searchScope == 0 {
 		for targetID := range q.targets {
